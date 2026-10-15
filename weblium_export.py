@@ -239,6 +239,8 @@ class Exporter:
             path = path.rstrip("/")
         if SKIP_EXT.search(path):
             return None
+        if re.search(r"[{}]", unquote(path)):  # шаблоны виджетов Weblium вида {%href%} — не страницы
+            return None
         return path or "/"
 
     def url_of(self, path):
