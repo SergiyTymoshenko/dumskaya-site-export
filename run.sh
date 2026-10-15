@@ -23,4 +23,10 @@ fi
 
 OUT="${OUT:-$HOME/dumskaya-export}"
 echo "Результат будет в: $OUT"
-.venv/bin/python weblium_export.py --out "$OUT" "$@"
+
+# Низкий приоритет процессора и диска: если на сервере работает другой проект,
+# он всегда получает ресурсы первым.
+LOW=(nice -n 19)
+if command -v ionice >/dev/null 2>&1; then LOW+=(ionice -c 3); fi
+
+"${LOW[@]}" .venv/bin/python weblium_export.py --out "$OUT" "$@"

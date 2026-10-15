@@ -26,6 +26,7 @@ import html as htmlmod
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -151,10 +152,31 @@ class Exporter:
         self.pages = {}    # path -> запись о странице
         self.images = {}   # ключ -> запись о картинке
         self.errors = []
+        self.min_free = int(args.min_free_gb * 1024 ** 3)
+        self.disk_stop = False
         os.makedirs(self.out, exist_ok=True)
         self.log_fh = open(os.path.join(self.out, "export.log"), "a", encoding="utf-8")
 
     # ---------- служебное ----------
+    def free_bytes(self):
+        return shutil.disk_usage(self.out).free
+
+    def disk_ok(self):
+        """Защита соседних проектов на сервере: не даём диску заполниться."""
+        if self.disk_stop:
+            return False
+        if self.free_bytes() < self.min_free:
+            with self.lock:
+                if not self.disk_stop:
+                    self.disk_stop = True
+                    self.errors.append(
+                        f"загрузка остановлена: на диске осталось меньше {human(self.min_free)} "
+                        f"(защита --min-free-gb)")
+                    print(f"[{datetime.now():%H:%M:%S}] СТОП: на диске осталось меньше "
+                          f"{human(self.min_free)}, загрузка картинок остановлена.", flush=True)
+            return False
+        return True
+
     def log(self, msg):
         line = f"[{datetime.now():%H:%M:%S}] {msg}"
         print(line, flush=True)
@@ -440,6 +462,9 @@ class Exporter:
             rec.update(file=os.path.join(sub, have), bytes=os.path.getsize(path),
                        state="уже было", quality=rec.get("quality") or "оригинал")
             self.fill_dims(rec)
+            return rec
+        if not self.disk_ok():
+            rec.update(state="НЕ СКАЧАНО", error="мало места на диске")
             return rec
         last = "нет вариантов"
         for i, url in enumerate(self.candidates(rec)):
@@ -770,6 +795,13 @@ class Exporter:
     def run(self):
         t0 = time.time()
         self.log(f"Старт. Сайт: {self.base}  Папка: {self.out}")
+        free = self.free_bytes()
+        self.log(f"Свободно на диске: {human(free)}; загрузка остановится, если останется меньше "
+                 f"{human(self.min_free)}")
+        if free < self.min_free + 512 * 1024 ** 2:
+            self.log("СТОП: места на диске слишком мало, ничего не скачиваю. "
+                     "Освободите место или укажите --min-free-gb поменьше.")
+            return 2
         self.crawl()
         if self.skip_images:
             self.log("Загрузка картинок пропущена (--skip-images)")
@@ -897,6 +929,8 @@ def main():
     ap.add_argument("--content-langs", default="ru", help="для каких языков делать content.md, например ru,ua,en")
     ap.add_argument("--max-pages", type=int, default=3000, help="предохранитель от бесконечного обхода")
     ap.add_argument("--skip-images", action="store_true", help="не качать картинки (быстрая проверка адресов)")
+    ap.add_argument("--min-free-gb", type=float, default=3.0,
+                    help="остановить загрузку, если на диске останется меньше стольких ГБ (по умолчанию 3)")
     ap.add_argument("--cdn-override", action="append", default=[], help=argparse.SUPPRESS)
     args = ap.parse_args()
     try:
